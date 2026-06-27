@@ -1,6 +1,7 @@
 """Rich-based terminal output."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from rich import box
@@ -10,7 +11,12 @@ from rich.table import Table
 
 from cca.parser import FileInfo
 
-console = Console()
+# Force UTF-8 on Windows to handle all Rich output correctly
+console = Console(highlight=False)
+if sys.platform == "win32":
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    console = Console(file=sys.stdout, highlight=False)
 
 
 def print_analysis_table(
@@ -20,8 +26,8 @@ def print_analysis_table(
     hot_files: dict[str, int],
 ) -> None:
     table = Table(
-        title=f"Project Analysis — {root.name}",
-        box=box.ROUNDED,
+        title=f"Project Analysis - {root.name}",
+        box=box.SIMPLE_HEAD,
         header_style="bold cyan",
         show_lines=False,
     )
@@ -49,7 +55,7 @@ def print_analysis_table(
             str(info.class_count),
             str(len(info.imports)),
             str(imported_by) if imported_by else "-",
-            "●" if rel in hot_files else "",
+            "HOT" if rel in hot_files else "",
         )
 
     console.print(table)
@@ -60,7 +66,7 @@ def print_dependency_summary(most_imported: list[tuple[str, int]]) -> None:
     if not top:
         return
     body = "\n".join(
-        f"  [cyan]{p}[/cyan]  ←  imported by [bold]{c}[/bold] file{'s' if c != 1 else ''}"
+        f"  [cyan]{p}[/cyan]  <-  imported by [bold]{c}[/bold] file{'s' if c != 1 else ''}"
         for p, c in top
     )
     console.print(Panel(body, title="[bold]Most Imported Files[/bold]", border_style="cyan"))
@@ -72,7 +78,7 @@ def print_token_report(baseline: int, optimized: int, savings_pct: float) -> Non
         f"  With .claudeignore:        [green]{optimized:>10,}[/green] tokens\n"
         f"  Estimated savings:         [bold green]{savings_pct:>9.1f}%[/bold green]",
         title="[bold]Token Budget Estimate[/bold]",
-        subtitle="[dim]Using cl100k_base ≈ Claude tokenizer (±10%)[/dim]",
+        subtitle="[dim]Approx. via cl100k_base (~Claude tokenizer, +-10%)[/dim]",
         border_style="green",
     ))
 
@@ -82,12 +88,12 @@ def print_unused(unused: dict[str, list[str]]) -> None:
         console.print(Panel("[green]No obvious dead code detected.[/green]", border_style="green"))
         return
     lines = [
-        f"  [yellow]{path}[/yellow]  →  {', '.join(syms)}"
+        f"  [yellow]{path}[/yellow]  ->  {', '.join(syms)}"
         for path, syms in list(unused.items())[:12]
     ]
     console.print(Panel(
         "\n".join(lines),
         title="[bold yellow]Possible Dead Code[/bold yellow]",
-        subtitle="[dim]Verify before removing — dynamic access not detected[/dim]",
+        subtitle="[dim]Verify before removing - dynamic access not detected[/dim]",
         border_style="yellow",
     ))

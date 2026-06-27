@@ -42,18 +42,24 @@ cca generate-config ./my-project
 ## Example Output
 
 ```
-╭─────────────────────── Project Analysis — test-project ─────────────────────────╮
-│ File                              Lines  Funcs  Classes  Imports  Imported by  Hot │
-│ app/config.py                        14      0        1        2            5      │
-│ app/db/queries.py                    22      4        0        1            3      │
-│ app/models/product.py                18      2        1        1            3  ●   │
-│ ...                                                                                │
-╰────────────────────────────────────────────────────────────────────────────────────╯
+  Project Analysis - test-project
 
-Token Budget Estimate
-  Full project (no ignore):    2,840 tokens
-  With .claudeignore:          1,950 tokens
-  Estimated savings:             31.3%
+  File                              Lines  Funcs  Classes  Imported by  Hot
+  app\models\user.py                   19      2        1            4
+  app\config.py                        14      0        1            3
+  app\db\queries.py                    24      4        0            3
+  app\db\connection.py                 23      4        1            2
+  app\services\product_service.py      40      4        0            2  HOT
+  ...
+
+  Most Imported Files
+    app\models\user.py  <-  imported by 4 files
+    app\config.py       <-  imported by 3 files
+
+  Token Budget Estimate
+    Full project (no ignore):   17,947 tokens
+    With .claudeignore:          2,967 tokens
+    Estimated savings:             83.5%
 ```
 
 ## Token Counting Note

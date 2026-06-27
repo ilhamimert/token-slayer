@@ -12,7 +12,7 @@ from cca.dead_code import find_unused_exports
 from cca.git_analyzer import get_hot_files, is_git_repo
 from cca.graph import build_graph, get_in_degrees, get_most_imported
 from cca.parser import analyze_project
-from cca.token_counter import count_project_tokens
+from cca.token_counter import count_all_tokens, count_project_tokens
 
 app = typer.Typer(
     name="cca",
@@ -62,7 +62,7 @@ def analyze(
     reporter.print_dependency_summary(most_imported)
 
     if hot_files:
-        console.print("[dim]  ● = changed in recent git history[/dim]\n")
+        console.print("[dim]  HOT = changed in recent git history[/dim]\n")
 
     if dead_code:
         with console.status("[cyan]Detecting dead code...[/cyan]"):
@@ -71,8 +71,8 @@ def analyze(
 
     if tokens:
         with console.status("[cyan]Counting tokens...[/cyan]"):
-            base = count_project_tokens(path)
-            opt = count_project_tokens(path, extra_ignore=set(CLAUDEIGNORE_PATTERNS))
+            base = count_all_tokens(path)
+            opt = count_project_tokens(path)
             b, o = base["total"], opt["total"]
             pct = (b - o) / b * 100 if b else 0.0
         reporter.print_token_report(b, o, pct)
@@ -101,8 +101,8 @@ def generate_config(
         unused = find_unused_exports(file_infos, path)
 
     with console.status("[cyan]Counting tokens...[/cyan]"):
-        base = count_project_tokens(path)
-        opt = count_project_tokens(path, extra_ignore=set(CLAUDEIGNORE_PATTERNS))
+        base = count_all_tokens(path)
+        opt = count_project_tokens(path)
         b, o = base["total"], opt["total"]
         pct = (b - o) / b * 100 if b else 0.0
 

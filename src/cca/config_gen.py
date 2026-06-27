@@ -1,4 +1,4 @@
-"""Generate CLAUDE.md from analysis results."""
+﻿"""Generate CLAUDE.md from analysis results."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -77,7 +77,7 @@ def generate_claude_md(
         sections += [
             "## Core Files (High Dependency Impact)",
             "",
-            "Changes here affect many other modules — review carefully:",
+            "Changes here affect many other modules - review carefully:",
             "",
             "| File | Imported by |",
             "|------|-------------|",
@@ -103,7 +103,7 @@ def generate_claude_md(
         sections += [
             "## Possible Dead Code",
             "",
-            "> Defined but never imported elsewhere. Verify before removing — ",
+            "> Defined but never imported elsewhere. Verify before removing - ",
             "> dynamic access or `__all__` usage may not be detected.",
             "",
         ]
