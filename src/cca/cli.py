@@ -402,6 +402,58 @@ def init_hooks(
     console.print(f"[dim]Every commit will now run: tslayer audit {project_abs}[/dim]")
 
 
+@app.command("sessions")
+def sessions_cmd(
+    watch: bool = typer.Option(False, "--watch", "-w", help="Live-refresh every 2s (Ctrl+C to stop)"),
+    hours: int = typer.Option(24, "--hours", "-h", help="Show sessions active in the last N hours"),
+    limit: int = typer.Option(10, "--limit", "-n", help="Max sessions to show"),
+    session_a: str = typer.Option(None, "--a", help="Session ID prefix to pin as slot A"),
+    session_b: str = typer.Option(None, "--b", help="Session ID prefix to pin as slot B"),
+):
+    """Show real-time token usage for active Claude Code sessions.
+
+    Two sessions are shown side-by-side with a live diff when exactly 2 are active.
+    Use --a / --b to pin specific session IDs for comparison.
+    """
+    from cca.session_monitor import get_recent_sessions, run_live, _build_renderable
+
+    all_sessions = get_recent_sessions(hours=hours)
+
+    if not all_sessions:
+        console.print(f"[yellow]No active Claude Code sessions in the last {hours}h.[/yellow]")
+        raise typer.Exit(0)
+
+    if session_a and session_b:
+        def _find(prefix: str) -> dict | None:
+            for s in all_sessions:
+                if s["short_id"].startswith(prefix) or s["session_id"].startswith(prefix):
+                    return s
+            return None
+        sa, sb = _find(session_a), _find(session_b)
+        if not sa:
+            console.print(f"[red]Session not found:[/red] {session_a}")
+            raise typer.Exit(1)
+        if not sb:
+            console.print(f"[red]Session not found:[/red] {session_b}")
+            raise typer.Exit(1)
+        sessions = [sa, sb]
+    else:
+        sessions = all_sessions[:limit]
+
+    if watch:
+        console.print(
+            f"[bold green]Watching {len(sessions)} session(s)[/bold green] "
+            "[dim](Ctrl+C to stop)[/dim]\n"
+        )
+        try:
+            run_live(sessions)
+        except KeyboardInterrupt:
+            console.print("\n[dim]Stopped.[/dim]")
+    else:
+        from rich.console import Group
+        console.print(_build_renderable(sessions))
+
+
 @app.command("mcp")
 def mcp_cmd():
     """Start the MCP stdio server so Claude can call cca tools directly."""
