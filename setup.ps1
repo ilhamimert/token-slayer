@@ -39,7 +39,7 @@ python -m pip install --upgrade pip --quiet
 
 # ── 5. Install all extras ────────────────────────────────────────────────────
 Write-Host "  Installing dependencies (this may take a minute)..." -ForegroundColor Gray
-pip install -e ".[dev,proxy,mcp,embeddings]" --quiet
+pip install -e ".[dev,mcp]" --quiet
 Ok "All dependencies installed"
 
 # ── 6. .env setup ───────────────────────────────────────────────────────────

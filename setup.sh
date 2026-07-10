@@ -44,7 +44,7 @@ pip install --upgrade pip --quiet
 
 # ── 5. Install all extras ────────────────────────────────────────────────────
 echo -e "  ${GRAY}Installing dependencies (this may take a minute)...${NC}"
-pip install -e ".[dev,proxy,mcp,embeddings]" --quiet
+pip install -e ".[dev,mcp]" --quiet
 ok "All dependencies installed"
 
 # ── 6. .env setup ───────────────────────────────────────────────────────────
