@@ -173,6 +173,7 @@ def analyze_file(path: Path) -> FileInfo:
 
 def analyze_project(root: Path, use_cache: bool = True) -> list[FileInfo]:
     from cca.cache import load_cache, save_cache, get_cached, set_cached
+    root = root.resolve()
     cache = load_cache(root) if use_cache else {}
     results: list[FileInfo] = []
     dirty = False
@@ -182,7 +183,20 @@ def analyze_project(root: Path, use_cache: bool = True) -> list[FileInfo]:
         try:
             cached_data = get_cached(cache, py_file, root) if use_cache else None
             if cached_data is not None:
-                results.append(FileInfo.from_dict(cached_data))
+                info = FileInfo.from_dict(cached_data)
+                # Ensure path is always absolute regardless of how it was cached
+                if not info.path.is_absolute():
+                    info = FileInfo(
+                        path=root / info.path,
+                        lines=info.lines,
+                        functions=info.functions,
+                        classes=info.classes,
+                        imports=info.imports,
+                        complexity=info.complexity,
+                        typed_functions=info.typed_functions,
+                        language=info.language,
+                    )
+                results.append(info)
             else:
                 info = analyze_file(py_file)
                 if use_cache:

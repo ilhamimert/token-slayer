@@ -20,19 +20,21 @@ def _module_to_path(module: str, root: Path) -> Path | None:
 
 
 def build_graph(file_infos: list[FileInfo], root: Path) -> nx.DiGraph:
+    root = root.resolve()
     graph: nx.DiGraph = nx.DiGraph()
-    path_set = {info.path for info in file_infos}
+    # Normalise all paths to absolute so relative_to() is safe
+    path_set = {info.path.resolve() for info in file_infos}
 
     for info in file_infos:
-        rel = str(info.path.relative_to(root))
+        rel = str(info.path.resolve().relative_to(root))
         graph.add_node(rel)
 
     for info in file_infos:
-        src = str(info.path.relative_to(root))
+        src = str(info.path.resolve().relative_to(root))
         for module in info.imports:
             target = _module_to_path(module, root)
-            if target and target in path_set:
-                tgt = str(target.relative_to(root))
+            if target and target.resolve() in path_set:
+                tgt = str(target.resolve().relative_to(root))
                 graph.add_edge(src, tgt)
 
     return graph

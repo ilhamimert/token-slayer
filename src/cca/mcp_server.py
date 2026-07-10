@@ -102,6 +102,68 @@ def create_server() -> "FastMCP":  # type: ignore[return]
             indent=2,
         )
 
+    @mcp.tool()
+    def route_prompt_tool(prompt: str, preferred_provider: str = "anthropic") -> str:
+        """Classify prompt complexity and recommend the cheapest capable model."""
+        from cca.proxy.router import classify_complexity, get_model_for_complexity, estimate_savings
+        complexity = classify_complexity(prompt)
+        model = get_model_for_complexity(complexity, preferred_provider)
+        savings = estimate_savings(prompt, len(prompt.split()), 200, preferred_provider)
+        return json.dumps({
+            "complexity": complexity.name,
+            "recommended_model": model.model,
+            "provider": model.provider,
+            "input_price_per_1m_usd": round(model.input_price * 1_000_000, 2),
+            "output_price_per_1m_usd": round(model.output_price * 1_000_000, 2),
+            "estimated_savings_vs_gpt4o": savings,
+        }, indent=2)
+
+    @mcp.tool()
+    def chunk_prompt_tool(prompt: str) -> str:
+        """Split a prompt into static (cacheable) and dynamic parts."""
+        from cca.proxy.prompt_chunker import PromptChunker
+        chunker = PromptChunker()
+        result = chunker.split(prompt)
+        return json.dumps({
+            "static_part_preview": result.static_part[:200] + "..." if len(result.static_part) > 200 else result.static_part,
+            "dynamic_part_preview": result.dynamic_part[:200] + "..." if len(result.dynamic_part) > 200 else result.dynamic_part,
+            "cache_key": result.cache_key[:16] + "...",
+            "static_tokens": result.static_tokens,
+            "dynamic_tokens": result.dynamic_tokens,
+            "cacheable_fraction_pct": round(result.cacheable_fraction * 100, 1),
+        }, indent=2)
+
+    @mcp.tool()
+    def generate_config_tool(project_path: str) -> str:
+        """Generate an optimised CLAUDE.md for a Python project."""
+        from cca.config_gen import generate_claude_md
+        from cca.dead_code import find_unused_exports
+        from cca.framework import detect_frameworks
+        from cca.graph import build_graph, get_most_imported
+        from cca.token_counter import count_all_tokens, count_project_tokens
+        root = Path(project_path)
+        file_infos = analyze_project(root)
+        graph = build_graph(file_infos, root)
+        most_imported = get_most_imported(graph, n=10)
+        unused = find_unused_exports(file_infos, root)
+        base = count_all_tokens(root)
+        opt = count_project_tokens(root)
+        b, o = base["total"], opt["total"]
+        pct = (b - o) / b * 100 if b else 0.0
+        frameworks = detect_frameworks(file_infos)
+        content = generate_claude_md(
+            root=root,
+            file_infos=file_infos,
+            most_imported=most_imported,
+            hot_files={},
+            unused_exports=unused,
+            token_savings_pct=pct,
+            frameworks=frameworks,
+        )
+        out = root / "CLAUDE.md"
+        out.write_text(content, encoding="utf-8")
+        return json.dumps({"written": str(out), "token_savings_pct": round(pct, 1)}, indent=2)
+
     return mcp
 
 

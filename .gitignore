@@ -10,3 +10,5 @@ build/
 .mypy_cache/
 .cca_cache.json
 *.log
+.env
+CONTEXT.md

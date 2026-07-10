@@ -80,8 +80,14 @@ def calculate_health(
     total_typed = sum(f.typed_functions for f in file_infos)
     type_cov = total_typed / total_funcs * 100 if total_funcs else 100.0
 
-    avg_cx = sum(f.complexity for f in file_infos) / len(file_infos) if file_infos else 0
-    cx_score = max(0.0, 100.0 - (avg_cx / 20.0 * 100.0))
+    # Per-function complexity is a fairer metric than per-file:
+    # a 600-line CLI file with 18 functions isn't more "complex" per function
+    # than a small module with 3 dense functions.
+    total_cx = sum(f.complexity for f in file_infos)
+    total_fns = sum(max(1, f.function_count) for f in file_infos)
+    avg_cx_per_fn = total_cx / total_fns if total_fns else 0
+    # avg ≤ 5/fn → excellent (100), avg = 10/fn → ok (50), avg ≥ 20/fn → poor (0)
+    cx_score = max(0.0, 100.0 - avg_cx_per_fn * 10.0)
 
     dc_score = max(0.0, 100.0 - len(unused_exports) * 10.0)
 

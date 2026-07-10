@@ -18,7 +18,7 @@ from cca.graph import build_graph, get_in_degrees, get_most_imported, find_cycle
 from cca.health import calculate_health
 from cca.lang import analyze_extra_files, detect_extra_languages
 from cca.parser import analyze_project
-from cca.token_counter import count_all_tokens, count_project_tokens
+from cca.token_counter import count_all_tokens, count_project_tokens, count_tokens
 
 app = typer.Typer(
     name="tslayer",
@@ -28,13 +28,15 @@ app = typer.Typer(
 console = Console()
 
 
-def _require_dir(path: Path) -> None:
+def _require_dir(path: Path) -> Path:
+    path = path.resolve()
     if not path.exists():
         console.print(f"[red]Error:[/red] '{path}' does not exist.")
         raise typer.Exit(1)
     if not path.is_dir():
         console.print(f"[red]Error:[/red] '{path}' is not a directory.")
         raise typer.Exit(1)
+    return path
 
 
 @app.command("analyze")
@@ -49,7 +51,7 @@ def analyze(
     output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ):
     """Analyze a Python project: file stats, dependencies, hot zones."""
-    _require_dir(path)
+    path = _require_dir(path)
     if not output_json:
         console.print(f"\n[bold green]Analyzing:[/bold green] {path.resolve()}\n")
 
@@ -162,7 +164,7 @@ def score(
     output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ):
     """Calculate a composite health score (0-100) for the project."""
-    _require_dir(path)
+    path = _require_dir(path)
     if not output_json:
         console.print(f"\n[bold green]Scoring:[/bold green] {path.resolve()}\n")
 
@@ -171,8 +173,17 @@ def score(
         graph = build_graph(file_infos, path)
         cycle_list = find_cycles(graph)
 
+    # Exclude test files from type-coverage and dead-code metrics:
+    # test methods never have return annotations (that's normal), and pytest
+    # discovers tests dynamically rather than via import.
+    _TEST_DIRS = {"tests", "test", "test-project"}
+    src_infos = [
+        fi for fi in file_infos
+        if not any(part in _TEST_DIRS for part in fi.path.parts)
+    ]
+
     with console.status("[cyan]Detecting dead code...[/cyan]"):
-        unused = find_unused_exports(file_infos, path)
+        unused = find_unused_exports(src_infos, path)
 
     with console.status("[cyan]Counting tokens...[/cyan]"):
         base_data = count_all_tokens(path)
@@ -180,7 +191,7 @@ def score(
         b, o = base_data["total"], opt_data["total"]
         pct = (b - o) / b * 100 if b else 0.0
 
-    health = calculate_health(file_infos, pct, unused, cycle_list)
+    health = calculate_health(src_infos, pct, unused, cycle_list)
 
     if output_json:
         typer.echo(json.dumps(health.to_dict(), indent=2))
@@ -196,7 +207,7 @@ def generate_config(
     chart: bool = typer.Option(False, "--chart", "-c", help="Show visual token distribution chart"),
 ):
     """Generate an optimized CLAUDE.md for the project."""
-    _require_dir(path)
+    path = _require_dir(path)
     console.print(f"\n[bold green]Generating CLAUDE.md for:[/bold green] {path.resolve()}\n")
 
     with console.status("[cyan]Analyzing project...[/cyan]"):
@@ -249,7 +260,7 @@ def tokens_cmd(
     output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ):
     """Show detailed token budget and visual distribution chart."""
-    _require_dir(path)
+    path = _require_dir(path)
     if not output_json:
         console.print(f"\n[bold green]Token analysis:[/bold green] {path.resolve()}\n")
 
@@ -283,7 +294,7 @@ def audit(
     output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ):
     """Check if CLAUDE.md exists and is up to date with the project."""
-    _require_dir(path)
+    path = _require_dir(path)
     if not output_json:
         console.print(f"\n[bold green]Auditing:[/bold green] {path.resolve()}\n")
 
@@ -322,9 +333,9 @@ def audit(
 
         ok.append(f"Token tasarrufu: {pct:.1f}%  ({b:,} -> {o:,})")
 
-        if o > 50_000:
-            issues.append(f"Optimize edilmis proje hala cok buyuk: {o:,} token (>50k)")
-        elif o > 20_000:
+        if o > 100_000:
+            issues.append(f"Optimize edilmis proje cok buyuk: {o:,} token (>100k)")
+        elif o > 60_000:
             issues.append(f"Buyuk proje: {o:,} token -- .claudeignore genisletmeyi dusunun")
 
     with console.status("[cyan]Checking circular dependencies...[/cyan]"):
@@ -364,7 +375,7 @@ def init_hooks(
     force: bool = typer.Option(False, "--force", "-f", help="Overwrite existing hook"),
 ):
     """Install a git pre-commit hook that runs tslayer audit before every commit."""
-    _require_dir(path)
+    path = _require_dir(path)
     git_dir = path / ".git"
     if not git_dir.is_dir():
         console.print(f"[red]No .git directory in {path}[/red]")
@@ -469,6 +480,352 @@ def mcp_cmd():
         console.print(f"[red]MCP not available:[/red] {e}")
         console.print("[dim]Install: pip install 'mcp[cli]'[/dim]")
         raise typer.Exit(1)
+
+
+@app.command("serve")
+def serve_cmd(
+    host: str = typer.Option("0.0.0.0", "--host", help="Bind address"),
+    port: int = typer.Option(8080, "--port", "-p", help="Listen port"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="Disable semantic cache"),
+    no_routing: bool = typer.Option(False, "--no-routing", help="Disable smart model routing"),
+    provider: str = typer.Option(None, "--provider", help="Preferred provider: anthropic | openai"),
+    similarity: float = typer.Option(0.90, "--similarity", help="Semantic cache similarity threshold (0-1)"),
+    ttl: int = typer.Option(3600, "--ttl", help="Cache entry TTL in seconds"),
+    embedding_model: str = typer.Option(
+        None, "--embedding-model",
+        help="Sentence-transformers model for semantic cache. "
+             "Overrides TSLAYER_EMBEDDING_MODEL env var. "
+             "Example: paraphrase-multilingual-MiniLM-L12-v2",
+    ),
+):
+    """Start the LLM cost-reduction proxy server.
+
+    Drop-in replacement for Anthropic/OpenAI endpoints.
+    Point your app at http://localhost:8080 instead of api.anthropic.com.
+
+    Features: semantic cache, smart routing, provider failover, cost dashboard.
+
+    Dashboard: http://localhost:8080/dashboard/text
+    """
+    import os
+
+    try:
+        from cca.proxy.server import run_server
+    except ImportError as e:
+        console.print(f"[red]Proxy not available:[/red] {e}")
+        console.print("[dim]Install: pip install 'token-slayer[proxy]'[/dim]")
+        raise typer.Exit(1)
+
+    if embedding_model:
+        os.environ["TSLAYER_EMBEDDING_MODEL"] = embedding_model
+
+    effective_model = os.environ.get("TSLAYER_EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+    console.print(
+        f"\n[bold green]Token Slayer Proxy[/bold green] listening on [cyan]http://{host}:{port}[/cyan]\n"
+        f"  Semantic cache  : [{'red]OFF' if no_cache else 'green]ON'}[/]\n"
+        f"  Embedding model : [cyan]{effective_model}[/cyan]\n"
+        f"  Smart routing   : [{'red]OFF' if no_routing else 'green]ON'}[/]\n"
+        f"  Preferred prov. : [cyan]{provider or 'auto'}[/cyan]\n"
+        f"  Dashboard       : [link]http://localhost:{port}/dashboard/text[/link]\n"
+    )
+    run_server(
+        host=host,
+        port=port,
+        preferred_provider=provider,
+        cache_ttl=float(ttl),
+        similarity_threshold=similarity,
+        disable_cache=no_cache,
+        disable_routing=no_routing,
+    )
+
+
+@app.command("dashboard")
+def dashboard_cmd(
+    hours: float = typer.Option(24.0, "--hours", "-h", help="Look-back window in hours"),
+    proxy_url: str = typer.Option("http://localhost:8080", "--url", help="Proxy server URL"),
+):
+    """Show the cost savings dashboard from a running proxy server."""
+    try:
+        import httpx
+        resp = httpx.get(f"{proxy_url}/dashboard/text?hours={hours}", timeout=5)
+        resp.raise_for_status()
+        console.print(resp.text)
+    except Exception as e:
+        console.print(f"[red]Could not reach proxy at {proxy_url}:[/red] {e}")
+        console.print("[dim]Make sure the proxy is running: tslayer serve[/dim]")
+        raise typer.Exit(1)
+
+
+@app.command("snapshot")
+def snapshot_cmd(
+    path: Path = typer.Argument(..., help="Path to the Python project"),
+    output: Path = typer.Option(None, "--output", "-o", help="Output path (default: <path>/CONTEXT.md)"),
+    show_stats: bool = typer.Option(True, "--stats/--no-stats", help="Show token reduction stats"),
+):
+    """Generate CONTEXT.md — a compressed project snapshot for Claude.
+
+    Replaces loading 50K tokens of source files with a single ~3K token
+    file containing: file tree + function/class signatures + config files.
+
+    Add 'CONTEXT.md' to .claudeignore of other projects that import this one.
+    Tell Claude: 'Read CONTEXT.md first, then ask me which files you need.'
+    """
+    path = _require_dir(path)
+    console.print(f"\n[bold green]Generating snapshot for:[/bold green] {path.resolve()}\n")
+
+    from cca.snapshot import build_snapshot, snapshot_token_stats
+
+    with console.status("[cyan]Building snapshot...[/cyan]"):
+        text = build_snapshot(path)
+
+    out = output or (path / "CONTEXT.md")
+    out.write_text(text, encoding="utf-8")
+    console.print(f"[bold green]v[/bold green] Written: {out}")
+
+    # Auto-add CONTEXT.md to .claudeignore so it doesn't bloat the project context
+    ci_path = path / ".claudeignore"
+    existing = ci_path.read_text(encoding="utf-8") if ci_path.exists() else ""
+    if "CONTEXT.md" not in existing:
+        with ci_path.open("a", encoding="utf-8") as f:
+            f.write("\n# Generated snapshot — Claude reads this directly, exclude from token count\nCONTEXT.md\n")
+        console.print("[dim]  Added CONTEXT.md to .claudeignore[/dim]")
+
+    if show_stats:
+        with console.status("[cyan]Counting tokens...[/cyan]"):
+            stats = snapshot_token_stats(path, text)
+        w = stats["with_claudeignore_tokens"]
+        s = stats["snapshot_tokens"]
+        r = stats["reduction_pct"]
+        console.print(f"\n  Project (.claudeignore) : [yellow]{w:>8,}[/yellow] tokens")
+        console.print(f"  Snapshot (CONTEXT.md)   : [green]{s:>8,}[/green] tokens")
+        console.print(f"\n  [bold green]Context reduction : {r:.1f}%[/bold green]")
+    console.print(
+        "\n[dim]Tip: Tell Claude 'Read CONTEXT.md first, "
+        "then ask me which files you need.'[/dim]"
+    )
+
+
+@app.command("focus")
+def focus_cmd(
+    path: Path = typer.Argument(..., help="Path to the Python project"),
+    query: str = typer.Argument(..., help="Task description, e.g. 'add Redis caching'"),
+    top: int = typer.Option(8, "--top", "-n", help="Number of files to return"),
+    output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
+):
+    """Find the files most relevant to a task — minimize what Claude reads.
+
+    Instead of loading the whole project, Claude reads only the files
+    this command identifies. Typically reduces context by 80-95%.
+
+    Example:
+      tslayer focus . "add Redis caching to the proxy"
+      tslayer focus . "fix the token counter bug"
+    """
+    path = _require_dir(path)
+
+    from cca.focus import rank_files, focus_context_tokens
+
+    with console.status(f"[cyan]Ranking files for: {query!r}[/cyan]"):
+        ranked = rank_files(path, query, top_n=top)
+
+    if output_json:
+        import json as _json
+        typer.echo(_json.dumps(ranked, indent=2))
+        return
+
+    if not ranked:
+        console.print("[yellow]No relevant files found for that query.[/yellow]")
+        raise typer.Exit(0)
+
+    console.print(f"\n[bold green]Top {len(ranked)} files for:[/bold green] [italic]{query}[/italic]\n")
+
+    from rich.table import Table
+    table = Table(show_header=True, header_style="bold cyan", box=None)
+    table.add_column("#", style="dim", width=3)
+    table.add_column("File", style="cyan", no_wrap=False)
+    table.add_column("Score", justify="right", width=6)
+    table.add_column("Tokens", justify="right", width=7)
+    table.add_column("Matched on", style="dim")
+
+    for i, r in enumerate(ranked, 1):
+        table.add_row(
+            str(i),
+            r["file"],
+            str(r["score"]),
+            f"{r['tokens']:,}",
+            r["reason"],
+        )
+
+    console.print(table)
+
+    total = focus_context_tokens(ranked)
+    with console.status("[cyan]Counting full project tokens...[/cyan]"):
+        full = count_project_tokens(path)["total"]
+
+    saved = full - total
+    pct = saved / full * 100 if full else 0.0
+    console.print(
+        f"\n  Focused context : [green]{total:>8,}[/green] tokens  ({len(ranked)} files)\n"
+        f"  Full project    : [red]{full:>8,}[/red] tokens\n"
+        f"  [bold green]Context reduction: {pct:.1f}% ({saved:,} tokens saved)[/bold green]\n"
+    )
+
+
+@app.command("slim")
+def slim_cmd(
+    path: Path = typer.Argument(..., help="Path to the Python project"),
+    budget: int = typer.Option(20_000, "--budget", "-b", help="Target token budget"),
+    apply: bool = typer.Option(False, "--apply", help="Write suggestions to .claudeignore"),
+    output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
+):
+    """Find what to add to .claudeignore to stay under a token budget.
+
+    Analyzes your project's token distribution and suggests patterns
+    that give the most savings per line added to .claudeignore.
+
+    Use --apply to automatically write the suggestions.
+    """
+    path = _require_dir(path)
+
+    from cca.slim import suggest_patterns, apply_patterns, analyze_token_distribution
+    from cca.token_counter import count_project_tokens
+
+    with console.status("[cyan]Analyzing token distribution...[/cyan]"):
+        suggestions = suggest_patterns(path, budget=budget)
+        current = count_project_tokens(path)["total"]
+
+    if output_json:
+        import json as _json
+        typer.echo(_json.dumps({
+            "current_tokens": current,
+            "budget": budget,
+            "over_budget": current > budget,
+            "suggestions": suggestions,
+        }, indent=2))
+        return
+
+    console.print(
+        f"\n[bold green]Slim analysis for:[/bold green] {path.resolve()}\n"
+        f"  Current context : [{'red' if current > budget else 'green'}]{current:,}[/] tokens\n"
+        f"  Budget target   : {budget:,} tokens\n"
+    )
+
+    if not suggestions:
+        console.print("[green]No significant savings found — your .claudeignore looks good.[/green]")
+        raise typer.Exit(0)
+
+    from rich.table import Table
+    table = Table(show_header=True, header_style="bold cyan", box=None)
+    table.add_column("Pattern", style="cyan")
+    table.add_column("Saves", justify="right", width=9)
+    table.add_column("Files", justify="right", width=6)
+    table.add_column("Reason", style="dim")
+
+    cumulative = 0
+    for s in suggestions:
+        cumulative += s["saves_tokens"]
+        table.add_row(
+            s["pattern"],
+            f"{s['saves_tokens']:,}",
+            str(s["files_affected"]),
+            s["reason"],
+        )
+
+    console.print(table)
+
+    potential = min(cumulative, current)
+    after = current - potential
+    console.print(
+        f"\n  After applying all : ~[green]{after:,}[/green] tokens "
+        f"([bold green]{potential / current * 100:.1f}% reduction[/bold green])\n"
+    )
+
+    if apply:
+        patterns = [s["pattern"] for s in suggestions]
+        added = apply_patterns(path, patterns)
+        if added:
+            console.print(f"[bold green]v[/bold green] Added {added} patterns to .claudeignore")
+        else:
+            console.print("[dim]All patterns already in .claudeignore[/dim]")
+    else:
+        console.print("[dim]Run with --apply to write these to .claudeignore[/dim]")
+
+
+@app.command("estimate")
+def estimate_cmd(
+    prompt: str = typer.Argument(None, help="Prompt text (or pass via --file / stdin)"),
+    file: Path = typer.Option(None, "--file", "-f", help="Read prompt from file"),
+    output_tokens: int = typer.Option(None, "--output-tokens", "-o", help="Expected output tokens (default: 25% of input)"),
+    provider: str = typer.Option(None, "--provider", help="Preferred provider: anthropic | openai"),
+    output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
+):
+    """Estimate the cost of a prompt before sending it.
+
+    Classifies complexity, selects the cheapest capable model via smart
+    routing, and shows cost vs. sending everything to the baseline model.
+
+    Examples:
+      echo "What is the capital of France?" | tslayer estimate
+      tslayer estimate "Analyze and refactor this module"
+      tslayer estimate --file prompt.txt --output-tokens 500
+    """
+    import sys
+
+    from cca.proxy.router import classify_complexity, estimate_savings
+
+    # Resolve prompt text: CLI arg > file > stdin
+    if file:
+        if not file.exists():
+            console.print(f"[red]File not found:[/red] {file}")
+            raise typer.Exit(1)
+        text = file.read_text(encoding="utf-8")
+    elif prompt:
+        text = prompt
+    elif not sys.stdin.isatty():
+        text = sys.stdin.read()
+    else:
+        console.print("[red]Provide a prompt: argument, --file, or stdin.[/red]")
+        raise typer.Exit(1)
+
+    input_tok = count_tokens(text)
+    out_tok = output_tokens if output_tokens is not None else max(1, input_tok // 4)
+
+    result = estimate_savings(text, input_tok, out_tok, preferred_provider=provider)
+
+    if output_json:
+        typer.echo(json.dumps({
+            "input_tokens": input_tok,
+            "output_tokens": out_tok,
+            **result,
+        }, indent=2))
+        return
+
+    complexity_colors = {"SIMPLE": "green", "MEDIUM": "yellow", "COMPLEX": "red"}
+    c = result["complexity"]
+    color = complexity_colors.get(c, "white")
+
+    console.print(f"\n[bold cyan]Token estimate[/bold cyan]\n")
+    console.print(f"  Input tokens    : [yellow]{input_tok:>8,}[/yellow]")
+    console.print(f"  Output tokens   : [yellow]{out_tok:>8,}[/yellow]  [dim](estimated)[/dim]")
+    console.print(f"  Complexity      : [{color}]{c}[/{color}]")
+    console.print(f"  Routed model    : [cyan]{result['chosen_model']}[/cyan]  [dim]({result['chosen_provider']})[/dim]")
+    console.print()
+
+    baseline_cost = result["baseline_cost_usd"]
+    routed_cost = result["routed_cost_usd"]
+    savings_usd = result["savings_usd"]
+    savings_pct = result["savings_pct"]
+
+    def _fmt_usd(v: float) -> str:
+        if v < 0.001:
+            return f"${v * 1000:.4f}m"
+        return f"${v:.5f}"
+
+    console.print(f"  Baseline cost   : [red]{_fmt_usd(baseline_cost):>10}[/red]  [dim](GPT-4o, no routing)[/dim]")
+    console.print(f"  Routed cost     : [green]{_fmt_usd(routed_cost):>10}[/green]")
+    console.print(
+        f"\n  [bold green]Savings: {_fmt_usd(savings_usd)} ({savings_pct:.1f}%)[/bold green]\n"
+    )
 
 
 @app.command("version")

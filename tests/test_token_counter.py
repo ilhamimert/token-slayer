@@ -45,7 +45,8 @@ class TestCountAllTokens:
         result = count_all_tokens(tmp_path)
         assert result["total"] == sum(result["files"].values())
 
-    def test_includes_venv_in_baseline(self, tmp_path: Path):
+    def test_always_skips_venv(self, tmp_path: Path):
+        # _ALWAYS_SKIP ensures .venv is excluded even in the "baseline" count
         venv = tmp_path / ".venv" / "lib"
         venv.mkdir(parents=True)
         (venv / "pkg.py").write_text("LARGE = 'x' * 100\n", encoding="utf-8")
@@ -53,7 +54,8 @@ class TestCountAllTokens:
 
         result = count_all_tokens(tmp_path)
         paths = set(result["files"].keys())
-        assert any(".venv" in p for p in paths)
+        assert not any(".venv" in p for p in paths)
+        assert any("main.py" in p for p in paths)
 
     def test_skips_binary_files(self, tmp_path: Path):
         (tmp_path / "img.png").write_bytes(b"\x89PNG\r\n\x1a\n")
@@ -91,10 +93,11 @@ class TestCountProjectTokens:
         assert not any("__pycache__" in p for p in paths)
 
     def test_savings_vs_all_tokens(self, tmp_path: Path):
-        # Project with .venv — optimized should be smaller than baseline
-        venv = tmp_path / ".venv" / "lib"
-        venv.mkdir(parents=True)
-        (venv / "large_pkg.py").write_text("X = " + "'a' * 500\n" * 50, encoding="utf-8")
+        # .claudeignore excludes 'logs/' — optimized should be smaller than baseline
+        logs = tmp_path / "logs"
+        logs.mkdir()
+        (logs / "app.log").write_text("INFO: started\n" * 200, encoding="utf-8")
+        (tmp_path / ".claudeignore").write_text("logs/\n")
         (tmp_path / "src.py").write_text("def foo(): pass\n", encoding="utf-8")
 
         baseline = count_all_tokens(tmp_path)["total"]
