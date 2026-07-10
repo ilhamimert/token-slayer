@@ -7,10 +7,10 @@
 
 **Always follow these steps — do NOT read source files directly without checking first:**
 
-1. **Start of session** → call `snapshot_tool` with the project path to get the full overview
-2. **Before reading any file** → call `focus_tool` with the project path + what you're working on
-3. **Only read the files** that `focus_tool` returns — nothing else
-4. **After making changes** → run `tslayer audit .` to verify health
+1. **Start of session** → call `snapshot_tool` to get the project overview
+2. **Read decisions** → call `decisions_tool` to understand WHY the code is structured this way — do not change structure without reading this first
+3. **Before reading files** → call `focus_tool` with what you're working on — only read the files it returns
+4. **After changes** → run `tslayer audit .` to verify health
 
 These MCP tools are available automatically. Using them reduces context by 80-90%.
 

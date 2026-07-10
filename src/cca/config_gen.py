@@ -122,6 +122,15 @@ def generate_claude_md(
             sections.append(f"- **`{path}`**: {', '.join(f'`{s}`' for s in syms)}")
         sections.append("")
 
+    if (root / "DECISIONS.md").exists():
+        sections += [
+            "## Architecture Decisions",
+            "",
+            "> See [DECISIONS.md](DECISIONS.md) for WHY the code is structured this way.",
+            "> Read it before making structural changes.",
+            "",
+        ]
+
     sections += [
         "## Recommended .claudeignore",
         "",

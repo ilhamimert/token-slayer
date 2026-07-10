@@ -135,6 +135,19 @@ def create_server() -> "FastMCP":  # type: ignore[return]
         return json.dumps(ranked, indent=2)
 
     @mcp.tool()
+    def decisions_tool(project_path: str) -> str:
+        """Read all recorded architectural decisions for the project.
+
+        Call this after snapshot_tool to understand WHY the code is structured
+        the way it is — before making any structural changes.
+        Returns empty string if no decisions have been recorded yet.
+        """
+        decisions_path = Path(project_path) / "DECISIONS.md"
+        if not decisions_path.exists():
+            return "(No decisions recorded yet. Use `tslayer decision` to record them.)"
+        return decisions_path.read_text(encoding="utf-8")
+
+    @mcp.tool()
     def generate_config_tool(project_path: str) -> str:
         """Generate an optimised CLAUDE.md for a Python project."""
         from cca.config_gen import generate_claude_md

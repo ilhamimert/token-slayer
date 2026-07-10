@@ -740,6 +740,63 @@ def checkpoint_cmd(
     console.print(f"  [dim]File: {out}[/dim]\n")
 
 
+@app.command("decision")
+def decision_cmd(
+    text: str = typer.Argument(None, help="Decision to record"),
+    path: Path = typer.Option(Path("."), "--path", "-p", help="Project root"),
+    tag: str = typer.Option("architecture", "--tag", "-t", help="Tag: architecture | bugfix | design | refactor"),
+    list_all: bool = typer.Option(False, "--list", "-l", help="List all recorded decisions"),
+):
+    """Record WHY the code is structured a certain way.
+
+    Saves to DECISIONS.md. Claude reads this at every session start
+    so it never second-guesses or silently reverts past choices.
+
+    Examples:
+      tslayer decision "complexity per-function — per-file penalises large files unfairly"
+      tslayer decision "dead code skips @property — they are framework entry points" --tag bugfix
+      tslayer decision --list
+    """
+    path = path.resolve()
+    decisions_path = path / "DECISIONS.md"
+
+    if list_all:
+        if not decisions_path.exists():
+            console.print("[yellow]No decisions recorded yet.[/yellow]")
+            console.print("[dim]Run: tslayer decision \"your decision\"[/dim]")
+            raise typer.Exit(0)
+        console.print(decisions_path.read_text(encoding="utf-8"))
+        raise typer.Exit(0)
+
+    if not text:
+        console.print("[red]Provide a decision:[/red] tslayer decision \"why you did X\"")
+        raise typer.Exit(1)
+
+    import datetime
+    today = datetime.date.today().isoformat()
+
+    entry = f"\n### {today} [{tag}]\n{text.strip()}\n"
+
+    if not decisions_path.exists():
+        decisions_path.write_text(
+            "# Architecture Decisions\n\n"
+            "> Managed by `tslayer decision`.\n"
+            "> Claude reads this to understand WHY the code is structured this way.\n"
+            "> Never remove entries — add a new one if a decision changes.\n",
+            encoding="utf-8",
+        )
+
+    with decisions_path.open("a", encoding="utf-8") as f:
+        f.write(entry)
+
+    console.print(f"\n[bold green]v[/bold green] Recorded in {decisions_path.name}\n")
+    console.print(f"  [cyan][{tag}][/cyan] {text.strip()}\n")
+    console.print(
+        "[dim]Claude will read this at every session start. "
+        "Add DECISIONS.md to your CLAUDE.md if not already there.[/dim]"
+    )
+
+
 @app.command("version")
 def version_cmd():
     """Show version."""
