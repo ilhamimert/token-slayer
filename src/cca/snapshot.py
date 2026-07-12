@@ -128,7 +128,7 @@ def build_snapshot(root: Path) -> str:
     if py_files:
         lines += ["## Signatures", ""]
         for rel in sorted(py_files):
-            fpath = root / rel.replace("/", "\\")
+            fpath = root / rel
             try:
                 src = fpath.read_text(encoding="utf-8", errors="ignore")
             except Exception:
@@ -147,12 +147,12 @@ def build_snapshot(root: Path) -> str:
     small_docs = [
         p for p in all_files
         if any(p.endswith(ext) for ext in doc_exts)
-        and (root / p.replace("/", "\\")).stat().st_size < 4_096
+        and (root / p).stat().st_size < 4_096
     ]
     if small_docs:
         lines += ["## Config & Docs", ""]
         for rel in sorted(small_docs):
-            fpath = root / rel.replace("/", "\\")
+            fpath = root / rel
             try:
                 content = fpath.read_text(encoding="utf-8", errors="ignore").strip()
             except Exception:

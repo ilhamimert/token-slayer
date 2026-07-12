@@ -51,6 +51,7 @@ def find_unused_exports(file_infos: list[FileInfo], root: Path) -> dict[str, lis
     Excludes test files and framework-registered entry points.
     """
     source_texts: dict[str, str] = {}
+    info_by_rel: dict[str, FileInfo] = {}
     for info in file_infos:
         rel = str(info.path.relative_to(root)).replace("\\", "/")
         # Skip test directories — pytest finds tests dynamically, not via import
@@ -60,12 +61,11 @@ def find_unused_exports(file_infos: list[FileInfo], root: Path) -> dict[str, lis
             source_texts[rel] = info.path.read_text(encoding="utf-8")
         except Exception:
             source_texts[rel] = ""
+        info_by_rel[rel] = info
 
     result: dict[str, list[str]] = {}
     for rel, src in source_texts.items():
-        info_path = root / rel.replace("/", "\\")
-        # Find the matching FileInfo for this path
-        info = next((fi for fi in file_infos if fi.path.resolve() == info_path.resolve()), None)
+        info = info_by_rel.get(rel)
         if info is None:
             continue
 
