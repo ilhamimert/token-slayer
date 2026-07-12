@@ -15,6 +15,8 @@ IGNORE_DIRS = {
     "dist", "build", ".egg-info", ".pytest_cache", ".mypy_cache",
 }
 
+_TEST_DIRS = {"tests", "test", "test-project"}
+
 _COMPLEXITY_NODES = {
     "if_statement", "elif_clause",
     "for_statement", "while_statement",
@@ -33,6 +35,7 @@ class FileInfo:
     complexity: int = 0       # cyclomatic: branch node count
     typed_functions: int = 0  # functions with return type annotation
     language: str = "python"
+    has_syntax_error: bool = False
 
     @property
     def function_count(self) -> int:
@@ -58,6 +61,7 @@ class FileInfo:
             "complexity": self.complexity,
             "typed_functions": self.typed_functions,
             "language": self.language,
+            "has_syntax_error": self.has_syntax_error,
         }
 
     @classmethod
@@ -71,6 +75,9 @@ class FileInfo:
             complexity=data.get("complexity", 0),
             typed_functions=data.get("typed_functions", 0),
             language=data.get("language", "python"),
+            # Stale cache entries predating this field default to False
+            # until the file is re-analyzed.
+            has_syntax_error=data.get("has_syntax_error", False),
         )
 
 
@@ -168,7 +175,21 @@ def analyze_file(path: Path) -> FileInfo:
         classes=classes,
         complexity=complexity,
         typed_functions=typed_functions,
+        has_syntax_error=tree.root_node.has_error,
     )
+
+
+def filter_source_files(file_infos: list[FileInfo]) -> list[FileInfo]:
+    """Exclude test files from quality metrics.
+
+    Test functions never carry return annotations (that's normal), and
+    pytest discovers tests dynamically rather than via import, so they
+    skew type-coverage and complexity metrics if included.
+    """
+    return [
+        fi for fi in file_infos
+        if not any(part in _TEST_DIRS for part in fi.path.parts)
+    ]
 
 
 def analyze_project(root: Path, use_cache: bool = True) -> list[FileInfo]:
@@ -195,6 +216,7 @@ def analyze_project(root: Path, use_cache: bool = True) -> list[FileInfo]:
                         complexity=info.complexity,
                         typed_functions=info.typed_functions,
                         language=info.language,
+                        has_syntax_error=info.has_syntax_error,
                     )
                 results.append(info)
             else:

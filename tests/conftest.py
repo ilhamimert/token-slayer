@@ -98,3 +98,14 @@ def git_project(sample_project: Path) -> Path:
     repo.index.commit("fix: update config and utils")
 
     return sample_project
+
+
+@pytest.fixture
+def dirty_git_project(git_project: Path) -> Path:
+    """git_project with an additional UNCOMMITTED edit to app/utils.py."""
+    (git_project / "app" / "utils.py").write_text(
+        "def helper():\n    return 99\n\ndef unused_function():\n    return None\n\n"
+        "def extra():\n    return 1\n",
+        encoding="utf-8",
+    )
+    return git_project

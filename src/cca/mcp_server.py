@@ -25,7 +25,7 @@ def create_server() -> "FastMCP":  # type: ignore[return]
     from cca.framework import detect_frameworks
     from cca.graph import build_graph, get_most_imported, find_cycles
     from cca.health import calculate_health
-    from cca.parser import analyze_project
+    from cca.parser import analyze_project, filter_source_files
     from cca.token_counter import count_all_tokens, count_project_tokens
 
     mcp = FastMCP("Token Slayer")  # type: ignore[call-arg]
@@ -70,12 +70,13 @@ def create_server() -> "FastMCP":  # type: ignore[return]
         file_infos = analyze_project(root)
         graph = build_graph(file_infos, root)
         cycles = find_cycles(graph)
-        unused = find_unused_exports(file_infos, root)
+        src_infos = filter_source_files(file_infos)
+        unused = find_unused_exports(src_infos, root)
         base = count_all_tokens(root)
         opt = count_project_tokens(root)
         b, o = base["total"], opt["total"]
         pct = (b - o) / b * 100 if b else 0.0
-        score = calculate_health(file_infos, pct, unused, cycles)
+        score = calculate_health(src_infos, pct, unused, cycles)
         return json.dumps(score.to_dict(), indent=2)
 
     @mcp.tool()
@@ -89,6 +90,32 @@ def create_server() -> "FastMCP":  # type: ignore[return]
             "cycle_count": len(cycles),
             "cycles": [" -> ".join(c + [c[0]]) for c in cycles[:10]],
         }, indent=2)
+
+    @mcp.tool()
+    def syntax_check_tool(project_path: str) -> str:
+        """Find Python files with tree-sitter syntax errors before Claude edits them."""
+        root = Path(project_path)
+        file_infos = analyze_project(root)
+        bad = [fi for fi in file_infos if fi.has_syntax_error]
+        return json.dumps({
+            "error_count": len(bad),
+            "files": [str(fi.path.relative_to(root)) for fi in bad],
+        }, indent=2)
+
+    @mcp.tool()
+    def diff_context_tool(project_path: str, pad: int = 3, staged_only: bool = False) -> str:
+        """Get changed files and line ranges from git — read only what changed.
+
+        Use this instead of re-reading whole files after a git pull or during
+        an in-progress refactor. Returns {} if not a git repo or no changes.
+        """
+        from cca.diff_context import get_diff_context
+        root = Path(project_path)
+        changes = get_diff_context(root, pad=pad, staged_only=staged_only)
+        return json.dumps(
+            {f: [{"start": s, "end": e} for s, e in ranges] for f, ranges in changes.items()},
+            indent=2,
+        )
 
     @mcp.tool()
     def most_imported_tool(project_path: str) -> str:
@@ -118,7 +145,7 @@ def create_server() -> "FastMCP":  # type: ignore[return]
         return build_snapshot(root)
 
     @mcp.tool()
-    def focus_tool(project_path: str, query: str, top_n: int = 8) -> str:
+    def focus_tool(project_path: str, query: str, top_n: int = 8, with_deps: bool = False) -> str:
         """Find the files most relevant to a task — read only these files.
 
         Use this BEFORE reading any source files. Describe what you're working
@@ -128,10 +155,16 @@ def create_server() -> "FastMCP":  # type: ignore[return]
             project_path: Root directory of the project.
             query: Task description, e.g. 'fix health score calculation'.
             top_n: Number of files to return (default 8).
+            with_deps: also include each file's direct import neighbors
+                (callers/callees) under a "related" key.
         """
-        from cca.focus import rank_files
+        from cca.focus import rank_files, rank_files_with_context
         root = Path(project_path)
-        ranked = rank_files(root, query, top_n=top_n)
+        ranked = (
+            rank_files_with_context(root, query, top_n=top_n)
+            if with_deps
+            else rank_files(root, query, top_n=top_n)
+        )
         return json.dumps(ranked, indent=2)
 
     @mcp.tool()

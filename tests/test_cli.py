@@ -88,6 +88,119 @@ class TestGenerateConfigCommand:
         assert "tasarruf" in result.output or "token" in result.output.lower()
 
 
+class TestInitCommand:
+    def test_writes_mcp_json(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr("cca.cli.shutil.which", lambda name: "tslayer")
+        result = runner.invoke(app, ["init", str(tmp_path)])
+        assert result.exit_code == 0, result.output
+        import json
+        data = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
+        assert data["mcpServers"]["tslayer"]["command"] == "tslayer"
+        assert data["mcpServers"]["tslayer"]["args"] == ["mcp"]
+        assert data["mcpServers"]["tslayer"]["type"] == "stdio"
+
+    def test_refuses_to_overwrite_without_force(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr("cca.cli.shutil.which", lambda name: "tslayer")
+        (tmp_path / ".mcp.json").write_text("{}", encoding="utf-8")
+        result = runner.invoke(app, ["init", str(tmp_path)])
+        assert result.exit_code == 1
+        assert "already exists" in result.output
+
+    def test_force_overwrites(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr("cca.cli.shutil.which", lambda name: "tslayer")
+        (tmp_path / ".mcp.json").write_text("{}", encoding="utf-8")
+        result = runner.invoke(app, ["init", str(tmp_path), "--force"])
+        assert result.exit_code == 0, result.output
+        import json
+        data = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
+        assert "mcpServers" in data
+
+    def test_falls_back_to_running_process_path_when_not_on_path(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr("cca.cli.shutil.which", lambda name: None)
+        result = runner.invoke(app, ["init", str(tmp_path)])
+        assert result.exit_code == 0, result.output
+        import json
+        data = json.loads((tmp_path / ".mcp.json").read_text(encoding="utf-8"))
+        assert data["mcpServers"]["tslayer"]["command"]
+
+    def test_defaults_to_current_directory(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr("cca.cli.shutil.which", lambda name: "tslayer")
+        monkeypatch.chdir(tmp_path)
+        result = runner.invoke(app, ["init"])
+        assert result.exit_code == 0, result.output
+        assert (tmp_path / ".mcp.json").exists()
+
+
+class TestFocusCommand:
+    def test_exits_zero(self, sample_project: Path):
+        result = runner.invoke(app, ["focus", str(sample_project), "config"])
+        assert result.exit_code == 0, result.output
+
+    def test_with_deps_flag_exits_zero(self, sample_project: Path):
+        result = runner.invoke(app, ["focus", str(sample_project), "config", "--with-deps"])
+        assert result.exit_code == 0, result.output
+
+    def test_json_without_deps_omits_related_key(self, sample_project: Path):
+        result = runner.invoke(app, ["focus", str(sample_project), "config", "--json"])
+        import json
+        data = json.loads(result.output)
+        assert data
+        assert "related" not in data[0]
+
+    def test_json_with_deps_includes_related_key(self, sample_project: Path):
+        result = runner.invoke(app, ["focus", str(sample_project), "config", "--with-deps", "--json"])
+        import json
+        data = json.loads(result.output)
+        assert data
+        assert "related" in data[0]
+
+
+class TestDiffContextCommand:
+    def test_non_git_repo_message(self, sample_project: Path):
+        result = runner.invoke(app, ["diff-context", str(sample_project)])
+        assert result.exit_code == 0
+        assert "Not a git repository" in result.output
+
+    def test_no_changes_message(self, git_project: Path):
+        result = runner.invoke(app, ["diff-context", str(git_project)])
+        assert result.exit_code == 0
+        assert "No changes detected" in result.output
+
+    def test_json_output_shape(self, dirty_git_project: Path):
+        result = runner.invoke(app, ["diff-context", str(dirty_git_project), "--json"])
+        assert result.exit_code == 0, result.output
+        import json
+        data = json.loads(result.output)
+        assert "app/utils.py" in data
+        assert all("start" in r and "end" in r for r in data["app/utils.py"])
+
+
+class TestAuditCommand:
+    def test_reports_syntax_ok_for_valid_project(self, sample_project: Path):
+        result = runner.invoke(app, ["audit", str(sample_project)])
+        assert "Sozdizimi hatasi yok" in result.output
+
+    def test_detects_broken_syntax_file(self, sample_project: Path):
+        (sample_project / "broken.py").write_text("def broken(:\n    pass\n", encoding="utf-8")
+        result = runner.invoke(app, ["audit", str(sample_project)])
+        assert result.exit_code == 1
+        assert "broken.py" in result.output
+
+    def test_json_output_includes_syntax_issue(self, sample_project: Path):
+        (sample_project / "broken.py").write_text("def broken(:\n    pass\n", encoding="utf-8")
+        result = runner.invoke(app, ["audit", str(sample_project), "--json"])
+        import json
+        data = json.loads(result.output)
+        assert data["passed"] is False
+        assert any("sozdizimi" in issue.lower() for issue in data["issues"])
+
+    def test_json_output_ok_list_includes_syntax_ok_for_clean_project(self, sample_project: Path):
+        result = runner.invoke(app, ["audit", str(sample_project), "--json"])
+        import json
+        data = json.loads(result.output)
+        assert any("sozdizimi" in item.lower() for item in data["ok"])
+
+
 class TestVersionCommand:
     def test_shows_version(self):
         result = runner.invoke(app, ["version"])

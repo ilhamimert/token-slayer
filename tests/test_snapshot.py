@@ -8,6 +8,7 @@ import pytest
 from cca.snapshot import (
     _build_file_tree,
     _extract_signatures,
+    _strip_boilerplate,
     _tree_lines,
     build_snapshot,
     snapshot_token_stats,
@@ -52,6 +53,43 @@ class TestExtractSignatures:
         src = "def   foo(  x,   y  ):\n    pass\n"
         sigs = _extract_signatures(src)
         assert all("  " not in s.strip() for s in sigs)
+
+
+# ── _strip_boilerplate ─────────────────────────────────────────────────────────
+
+class TestStripBoilerplate:
+    def test_strips_blank_lines(self):
+        text = "name = 'x'\n\n\nversion = '1'\n"
+        result = _strip_boilerplate(text, "toml")
+        assert "" not in result.splitlines()
+
+    def test_strips_full_line_comment_toml(self):
+        text = "# comment\nname = 'x'\n"
+        result = _strip_boilerplate(text, "toml")
+        assert "# comment" not in result
+        assert "name = 'x'" in result
+
+    def test_preserves_inline_comment(self):
+        text = "key = 1  # not stripped\n"
+        result = _strip_boilerplate(text, "toml")
+        assert "key = 1  # not stripped" in result
+
+    def test_markdown_headings_preserved(self):
+        text = "# Heading\ntext\n"
+        result = _strip_boilerplate(text, "md")
+        assert "# Heading" in result
+
+    def test_ini_semicolon_comment_stripped(self):
+        text = "; comment\nkey=1\n"
+        result = _strip_boilerplate(text, "ini")
+        assert "; comment" not in result
+        assert "key=1" in result
+
+    def test_unknown_language_only_strips_blanks(self):
+        text = "# looks like a comment\nreal_content\n\n"
+        result = _strip_boilerplate(text, "unknownlang")
+        assert "# looks like a comment" in result
+        assert "" not in result.splitlines()
 
 
 # ── _build_file_tree ──────────────────────────────────────────────────────────
@@ -145,6 +183,27 @@ class TestBuildSnapshot:
         (tmp_path / "a.py").write_text("pass")
         result = build_snapshot(tmp_path)
         assert tmp_path.name in result
+
+    def test_small_toml_comments_stripped_from_output(self, tmp_path: Path):
+        (tmp_path / "pyproject.toml").write_text(
+            "# leading comment\n[tool]\nname = 'x'\n\n# another comment\nversion = '1'\n"
+        )
+        result = build_snapshot(tmp_path)
+        assert "# leading comment" not in result
+        assert "# another comment" not in result
+        assert "name = 'x'" in result
+
+    def test_signatures_section_unaffected_by_minify(self, tmp_path: Path):
+        (tmp_path / "mod.py").write_text(
+            "def foo():\n    # inline comment inside body\n    return 1\n"
+        )
+        result = build_snapshot(tmp_path)
+        assert "inline comment inside body" not in result
+
+    def test_file_tree_unaffected_by_minify(self, tmp_path: Path):
+        (tmp_path / "pyproject.toml").write_text("# comment\nname = 'x'\n")
+        result = build_snapshot(tmp_path)
+        assert "pyproject.toml" in result.split("## File Tree")[1].split("##")[0]
 
 
 # ── snapshot_token_stats ──────────────────────────────────────────────────────

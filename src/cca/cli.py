@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import datetime
 import json
+import shutil
 import stat
+import sys
 from pathlib import Path
 
 import typer
@@ -17,7 +19,7 @@ from cca.git_analyzer import get_hot_files, is_git_repo
 from cca.graph import build_graph, get_in_degrees, get_most_imported, find_cycles
 from cca.health import calculate_health
 from cca.lang import analyze_extra_files, detect_extra_languages
-from cca.parser import analyze_project
+from cca.parser import analyze_project, filter_source_files
 from cca.token_counter import count_all_tokens, count_project_tokens
 
 app = typer.Typer(
@@ -37,6 +39,182 @@ def _require_dir(path: Path) -> Path:
         console.print(f"[red]Error:[/red] '{path}' is not a directory.")
         raise typer.Exit(1)
     return path
+
+
+def _resolve_tslayer_command() -> str:
+    """Find how to invoke `tslayer` from any shell — prefer PATH lookup
+    (portable across machines/projects when installed via pipx), fall back
+    to this running process's own executable path."""
+    on_path = shutil.which("tslayer")
+    return on_path or sys.argv[0]
+
+
+@app.command("init")
+def init_cmd(
+    path: Path = typer.Argument(Path("."), help="Project directory to activate Token Slayer in"),
+    force: bool = typer.Option(False, "--force", "-f", help="Overwrite an existing .mcp.json"),
+):
+    """One-command setup: register Token Slayer as an MCP server for this project.
+
+    Writes .mcp.json so Claude Code auto-loads Token Slayer's tools
+    (snapshot, focus, audit, diff-context, etc.) the next time this
+    project opens. Run this once per project, then reload the Claude
+    Code window.
+
+    Example:
+      cd my-project
+      tslayer init
+    """
+    path = _require_dir(path)
+    mcp_json_path = path / ".mcp.json"
+    if mcp_json_path.exists() and not force:
+        console.print(
+            f"[yellow].mcp.json already exists:[/yellow] {mcp_json_path}\n"
+            "[dim]Use --force to overwrite.[/dim]"
+        )
+        raise typer.Exit(1)
+
+    tslayer_command = _resolve_tslayer_command()
+    config = {
+        "mcpServers": {
+            "tslayer": {
+                "command": tslayer_command,
+                "args": ["mcp"],
+                "type": "stdio",
+            }
+        }
+    }
+    mcp_json_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+
+    console.print(f"[bold green]v[/bold green] .mcp.json written: {mcp_json_path}")
+    console.print(f"  [dim]command: {tslayer_command}[/dim]")
+    console.print(
+        "\n[bold cyan]Next step:[/bold cyan] reload the Claude Code window "
+        "(Ctrl+Shift+P -> Developer: Reload Window) — Token Slayer's tools "
+        "will then load automatically."
+    )
+
+
+def _analyze_json_result(
+    path: Path,
+    file_infos: list,
+    extra_langs: set[str],
+    frameworks: dict,
+    most_imported: list,
+    hot_files: dict[str, int],
+    graph,
+    *,
+    tokens: bool,
+    cycles: bool,
+    quality: bool,
+) -> dict:
+    result: dict = {
+        "project": str(path.resolve()),
+        "languages": ["python"] + sorted(extra_langs),
+        "files": len(file_infos),
+        "total_lines": sum(f.lines for f in file_infos),
+        "total_functions": sum(f.function_count for f in file_infos),
+        "total_classes": sum(f.class_count for f in file_infos),
+        "frameworks": list(frameworks.values()),
+        "most_imported": [{"file": p, "count": c} for p, c in most_imported if c > 0],
+        "hot_files": hot_files,
+    }
+    if tokens:
+        result["tokens"] = _analyze_token_summary(path)
+    if cycles:
+        cycle_list = find_cycles(graph)
+        result["cycles"] = [" -> ".join(c + [c[0]]) for c in cycle_list]
+    if quality:
+        result["quality"] = _analyze_quality_summary(file_infos)
+    return result
+
+
+def _analyze_token_summary(path: Path) -> dict:
+    with console.status("[cyan]Counting tokens...[/cyan]"):
+        base_data = count_all_tokens(path)
+        opt_data = count_project_tokens(path)
+        b, o = base_data["total"], opt_data["total"]
+        pct = (b - o) / b * 100 if b else 0.0
+    return {"baseline": b, "optimized": o, "savings_pct": round(pct, 1)}
+
+
+def _analyze_quality_summary(file_infos: list) -> dict:
+    return {
+        "avg_complexity": round(
+            sum(f.complexity for f in file_infos) / len(file_infos), 1
+        ) if file_infos else 0,
+        "type_coverage_pct": round(
+            sum(f.typed_functions for f in file_infos) /
+            max(sum(f.function_count for f in file_infos), 1) * 100, 1
+        ),
+    }
+
+
+def _print_analyze_console(
+    path: Path,
+    file_infos: list,
+    in_degrees: dict,
+    hot_files: dict[str, int],
+    most_imported: list,
+    frameworks: dict,
+    extra_langs: set[str],
+    graph,
+    *,
+    quality: bool,
+    cycles: bool,
+    dead_code: bool,
+    tokens: bool,
+    chart: bool,
+) -> None:
+    if frameworks:
+        reporter.print_frameworks(frameworks)
+
+    if extra_langs:
+        console.print(f"[dim]  Extra languages detected: {', '.join(sorted(extra_langs))}[/dim]\n")
+
+    reporter.print_analysis_table(file_infos, path, in_degrees, hot_files)
+    reporter.print_dependency_summary(most_imported)
+
+    if hot_files:
+        console.print("[dim]  HOT = changed in recent git history[/dim]\n")
+
+    if quality:
+        reporter.print_quality_table(file_infos, path)
+
+    if cycles:
+        _print_cycles(path, graph)
+
+    if dead_code:
+        _print_dead_code(path, file_infos)
+
+    if tokens or chart:
+        _print_token_section(path, tokens=tokens, chart=chart)
+
+
+def _print_cycles(path: Path, graph) -> None:
+    with console.status("[cyan]Checking for circular dependencies...[/cyan]"):
+        cycle_list = find_cycles(graph)
+    reporter.print_cycles_warning(cycle_list)
+
+
+def _print_dead_code(path: Path, file_infos: list) -> None:
+    with console.status("[cyan]Detecting dead code...[/cyan]"):
+        unused = find_unused_exports(file_infos, path)
+    reporter.print_unused(unused)
+
+
+def _print_token_section(path: Path, *, tokens: bool, chart: bool) -> None:
+    with console.status("[cyan]Counting tokens...[/cyan]"):
+        base_data = count_all_tokens(path)
+        opt_data = count_project_tokens(path)
+        b, o = base_data["total"], opt_data["total"]
+        pct = (b - o) / b * 100 if b else 0.0
+
+    if tokens:
+        reporter.print_token_report(b, o, pct)
+
+    if chart:
+        reporter.print_token_comparison_chart(base_data["files"], opt_data["files"])
 
 
 @app.command("analyze")
@@ -85,77 +263,17 @@ def analyze(
     frameworks = detect_frameworks(file_infos)
 
     if output_json:
-        result: dict = {
-            "project": str(path.resolve()),
-            "languages": ["python"] + sorted(extra_langs),
-            "files": len(file_infos),
-            "total_lines": sum(f.lines for f in file_infos),
-            "total_functions": sum(f.function_count for f in file_infos),
-            "total_classes": sum(f.class_count for f in file_infos),
-            "frameworks": list(frameworks.values()),
-            "most_imported": [{"file": p, "count": c} for p, c in most_imported if c > 0],
-            "hot_files": hot_files,
-        }
-        if tokens:
-            with console.status("[cyan]Counting tokens...[/cyan]"):
-                base_data = count_all_tokens(path)
-                opt_data = count_project_tokens(path)
-                b, o = base_data["total"], opt_data["total"]
-                pct = (b - o) / b * 100 if b else 0.0
-            result["tokens"] = {"baseline": b, "optimized": o, "savings_pct": round(pct, 1)}
-        if cycles:
-            cycle_list = find_cycles(graph)
-            result["cycles"] = [" -> ".join(c + [c[0]]) for c in cycle_list]
-        if quality:
-            result["quality"] = {
-                "avg_complexity": round(
-                    sum(f.complexity for f in file_infos) / len(file_infos), 1
-                ) if file_infos else 0,
-                "type_coverage_pct": round(
-                    sum(f.typed_functions for f in file_infos) /
-                    max(sum(f.function_count for f in file_infos), 1) * 100, 1
-                ),
-            }
+        result = _analyze_json_result(
+            path, file_infos, extra_langs, frameworks, most_imported, hot_files, graph,
+            tokens=tokens, cycles=cycles, quality=quality,
+        )
         typer.echo(json.dumps(result, indent=2))
         return
 
-    if frameworks:
-        reporter.print_frameworks(frameworks)
-
-    if extra_langs:
-        console.print(f"[dim]  Extra languages detected: {', '.join(sorted(extra_langs))}[/dim]\n")
-
-    reporter.print_analysis_table(file_infos, path, in_degrees, hot_files)
-    reporter.print_dependency_summary(most_imported)
-
-    if hot_files:
-        console.print("[dim]  HOT = changed in recent git history[/dim]\n")
-
-    if quality:
-        reporter.print_quality_table(file_infos, path)
-
-    if cycles:
-        with console.status("[cyan]Checking for circular dependencies...[/cyan]"):
-            cycle_list = find_cycles(graph)
-        reporter.print_cycles_warning(cycle_list)
-
-    if dead_code:
-        with console.status("[cyan]Detecting dead code...[/cyan]"):
-            unused = find_unused_exports(file_infos, path)
-        reporter.print_unused(unused)
-
-    if tokens or chart:
-        with console.status("[cyan]Counting tokens...[/cyan]"):
-            base_data = count_all_tokens(path)
-            opt_data = count_project_tokens(path)
-            b, o = base_data["total"], opt_data["total"]
-            pct = (b - o) / b * 100 if b else 0.0
-
-        if tokens:
-            reporter.print_token_report(b, o, pct)
-
-        if chart:
-            reporter.print_token_comparison_chart(base_data["files"], opt_data["files"])
+    _print_analyze_console(
+        path, file_infos, in_degrees, hot_files, most_imported, frameworks, extra_langs, graph,
+        quality=quality, cycles=cycles, dead_code=dead_code, tokens=tokens, chart=chart,
+    )
 
 
 @app.command("score")
@@ -173,14 +291,7 @@ def score(
         graph = build_graph(file_infos, path)
         cycle_list = find_cycles(graph)
 
-    # Exclude test files from type-coverage and dead-code metrics:
-    # test methods never have return annotations (that's normal), and pytest
-    # discovers tests dynamically rather than via import.
-    _TEST_DIRS = {"tests", "test", "test-project"}
-    src_infos = [
-        fi for fi in file_infos
-        if not any(part in _TEST_DIRS for part in fi.path.parts)
-    ]
+    src_infos = filter_source_files(file_infos)
 
     with console.status("[cyan]Detecting dead code...[/cyan]"):
         unused = find_unused_exports(src_infos, path)
@@ -288,6 +399,79 @@ def tokens_cmd(
         reporter.print_token_comparison_chart(base_data["files"], opt_data["files"])
 
 
+def _audit_claude_md_freshness(claude_md: Path, path: Path) -> str | None:
+    md_mtime = claude_md.stat().st_mtime
+    newest_py = max(
+        (f.stat().st_mtime for f in path.rglob("*.py")
+         if not any(p in {"venv", ".venv", "__pycache__"} for p in f.parts)),
+        default=0,
+    )
+    if newest_py <= md_mtime:
+        return None
+    delta = (
+        datetime.datetime.fromtimestamp(newest_py)
+        - datetime.datetime.fromtimestamp(md_mtime)
+    )
+    return (
+        f"CLAUDE.md eskidi -- "
+        f"en son .py degisikliginden {int(delta.total_seconds() // 60)} dakika once uretilmis"
+    )
+
+
+def _audit_token_budget(path: Path) -> tuple[str, str | None]:
+    with console.status("[cyan]Counting tokens...[/cyan]"):
+        base_data = count_all_tokens(path)
+        opt_data = count_project_tokens(path)
+        b, o = base_data["total"], opt_data["total"]
+        pct = (b - o) / b * 100 if b else 0.0
+
+    ok_message = f"Token tasarrufu: {pct:.1f}%  ({b:,} -> {o:,})"
+    if o > 100_000:
+        return ok_message, f"Optimize edilmis proje cok buyuk: {o:,} token (>100k)"
+    if o > 60_000:
+        return ok_message, f"Buyuk proje: {o:,} token -- .claudeignore genisletmeyi dusunun"
+    return ok_message, None
+
+
+def _audit_claude_md_section(claude_md: Path, path: Path) -> tuple[list[str], list[str]]:
+    ok: list[str] = ["CLAUDE.md mevcut"]
+    issues: list[str] = []
+
+    freshness_issue = _audit_claude_md_freshness(claude_md, path)
+    if freshness_issue:
+        issues.append(freshness_issue)
+    else:
+        ok.append("CLAUDE.md guncel")
+
+    token_ok, token_issue = _audit_token_budget(path)
+    ok.append(token_ok)
+    if token_issue:
+        issues.append(token_issue)
+
+    return ok, issues
+
+
+def _audit_cycles(path: Path) -> str | None:
+    with console.status("[cyan]Checking circular dependencies...[/cyan]"):
+        file_infos = analyze_project(path)
+        graph = build_graph(file_infos, path)
+        cycle_list = find_cycles(graph)
+    if not cycle_list:
+        return None
+    return f"{len(cycle_list)} circular dependency bulundu -- cca analyze --cycles ile detay"
+
+
+def _audit_syntax_errors(path: Path) -> str | None:
+    with console.status("[cyan]Checking syntax errors...[/cyan]"):
+        file_infos = analyze_project(path)
+    bad = [fi for fi in file_infos if fi.has_syntax_error]
+    if not bad:
+        return None
+    names = ", ".join(str(fi.path.relative_to(path)) for fi in bad[:5])
+    more = f" (+{len(bad) - 5} more)" if len(bad) > 5 else ""
+    return f"{len(bad)} dosyada sozdizimi hatasi bulundu: {names}{more}"
+
+
 @app.command("audit")
 def audit(
     path: Path = typer.Argument(..., help="Path to the Python project"),
@@ -299,54 +483,23 @@ def audit(
         console.print(f"\n[bold green]Auditing:[/bold green] {path.resolve()}\n")
 
     claude_md = path / "CLAUDE.md"
-    issues: list[str] = []
-    ok: list[str] = []
-
     if not claude_md.exists():
-        issues.append("CLAUDE.md bulunamadi -- run: tslayer generate-config <path>")
+        ok: list[str] = []
+        issues: list[str] = ["CLAUDE.md bulunamadi -- run: tslayer generate-config <path>"]
     else:
-        ok.append("CLAUDE.md mevcut")
+        ok, issues = _audit_claude_md_section(claude_md, path)
 
-        md_mtime = claude_md.stat().st_mtime
-        newest_py = max(
-            (f.stat().st_mtime for f in path.rglob("*.py")
-             if not any(p in {"venv", ".venv", "__pycache__"} for p in f.parts)),
-            default=0,
-        )
-        if newest_py > md_mtime:
-            delta = (
-                datetime.datetime.fromtimestamp(newest_py)
-                - datetime.datetime.fromtimestamp(md_mtime)
-            )
-            issues.append(
-                f"CLAUDE.md eskidi -- "
-                f"en son .py degisikliginden {int(delta.total_seconds() // 60)} dakika once uretilmis"
-            )
-        else:
-            ok.append("CLAUDE.md guncel")
-
-        with console.status("[cyan]Counting tokens...[/cyan]"):
-            base_data = count_all_tokens(path)
-            opt_data = count_project_tokens(path)
-            b, o = base_data["total"], opt_data["total"]
-            pct = (b - o) / b * 100 if b else 0.0
-
-        ok.append(f"Token tasarrufu: {pct:.1f}%  ({b:,} -> {o:,})")
-
-        if o > 100_000:
-            issues.append(f"Optimize edilmis proje cok buyuk: {o:,} token (>100k)")
-        elif o > 60_000:
-            issues.append(f"Buyuk proje: {o:,} token -- .claudeignore genisletmeyi dusunun")
-
-    with console.status("[cyan]Checking circular dependencies...[/cyan]"):
-        file_infos = analyze_project(path)
-        graph = build_graph(file_infos, path)
-        cycle_list = find_cycles(graph)
-
-    if cycle_list:
-        issues.append(f"{len(cycle_list)} circular dependency bulundu -- cca analyze --cycles ile detay")
+    cycle_issue = _audit_cycles(path)
+    if cycle_issue:
+        issues.append(cycle_issue)
     else:
         ok.append("Circular dependency yok")
+
+    syntax_issue = _audit_syntax_errors(path)
+    if syntax_issue:
+        issues.append(syntax_issue)
+    else:
+        ok.append("Sozdizimi hatasi yok")
 
     if output_json:
         typer.echo(json.dumps({
@@ -536,6 +689,7 @@ def focus_cmd(
     path: Path = typer.Argument(..., help="Path to the Python project"),
     query: str = typer.Argument(..., help="Task description, e.g. 'add Redis caching'"),
     top: int = typer.Option(8, "--top", "-n", help="Number of files to return"),
+    with_deps: bool = typer.Option(False, "--with-deps", help="Include direct import neighbors for each ranked file"),
     output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
 ):
     """Find the files most relevant to a task — minimize what Claude reads.
@@ -546,13 +700,18 @@ def focus_cmd(
     Example:
       tslayer focus . "add Redis caching to the proxy"
       tslayer focus . "fix the token counter bug"
+      tslayer focus . "fix the token counter bug" --with-deps
     """
     path = _require_dir(path)
 
-    from cca.focus import rank_files, focus_context_tokens
+    from cca.focus import rank_files, rank_files_with_context, focus_context_tokens
 
     with console.status(f"[cyan]Ranking files for: {query!r}[/cyan]"):
-        ranked = rank_files(path, query, top_n=top)
+        ranked = (
+            rank_files_with_context(path, query, top_n=top)
+            if with_deps
+            else rank_files(path, query, top_n=top)
+        )
 
     if output_json:
         import json as _json
@@ -572,15 +731,23 @@ def focus_cmd(
     table.add_column("Score", justify="right", width=6)
     table.add_column("Tokens", justify="right", width=7)
     table.add_column("Matched on", style="dim")
+    if with_deps:
+        table.add_column("Related", style="dim")
 
     for i, r in enumerate(ranked, 1):
-        table.add_row(
+        row = [
             str(i),
             r["file"],
             str(r["score"]),
             f"{r['tokens']:,}",
             r["reason"],
-        )
+        ]
+        if with_deps:
+            related = r.get("related", [])
+            imports = sum(1 for x in related if x["relation"] == "imports")
+            imported_by = sum(1 for x in related if x["relation"] == "imported_by")
+            row.append(f"{imports} imports, {imported_by} imported_by")
+        table.add_row(*row)
 
     console.print(table)
 
@@ -595,6 +762,53 @@ def focus_cmd(
         f"  Full project    : [red]{full:>8,}[/red] tokens\n"
         f"  [bold green]Context reduction: {pct:.1f}% ({saved:,} tokens saved)[/bold green]\n"
     )
+
+
+@app.command("diff-context")
+def diff_context_cmd(
+    path: Path = typer.Argument(..., help="Path to the git project"),
+    pad: int = typer.Option(3, "--pad", "-p", help="Extra lines of context around each change"),
+    staged: bool = typer.Option(False, "--staged", help="Only diff staged changes vs HEAD"),
+    output_json: bool = typer.Option(False, "--json", help="Output results as JSON"),
+):
+    """Show changed files and line ranges from git — read only what changed.
+
+    Instead of loading entire files after a git pull or mid-refactor, Claude
+    reads only the changed line ranges (+padding) this command reports.
+
+    Example:
+      tslayer diff-context .
+      tslayer diff-context . --staged --pad 5
+    """
+    path = _require_dir(path)
+    if not is_git_repo(path):
+        console.print("[yellow]Not a git repository.[/yellow]")
+        raise typer.Exit(0)
+
+    from cca.diff_context import get_diff_context
+
+    with console.status("[cyan]Reading git diff...[/cyan]"):
+        changes = get_diff_context(path, pad=pad, staged_only=staged)
+
+    if output_json:
+        typer.echo(json.dumps(
+            {f: [{"start": s, "end": e} for s, e in ranges] for f, ranges in changes.items()},
+            indent=2,
+        ))
+        return
+
+    if not changes:
+        console.print("[green]No changes detected.[/green]")
+        raise typer.Exit(0)
+
+    console.print(f"\n[bold green]Changed files in:[/bold green] {path.resolve()}\n")
+    from rich.table import Table
+    table = Table(show_header=True, header_style="bold cyan", box=None)
+    table.add_column("File", style="cyan")
+    table.add_column("Line ranges", style="yellow")
+    for f, ranges in changes.items():
+        table.add_row(f, ", ".join(f"{s}-{e}" for s, e in ranges))
+    console.print(table)
 
 
 @app.command("slim")

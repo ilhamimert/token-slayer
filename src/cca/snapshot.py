@@ -72,6 +72,36 @@ def _extract_signatures(source: str) -> list[str]:
     return sigs
 
 
+_FULL_LINE_COMMENT_PREFIXES: dict[str, tuple[str, ...]] = {
+    "toml": ("#",),
+    "cfg": ("#", ";"),
+    "ini": ("#", ";"),
+    "yml": ("#",),
+    "yaml": ("#",),
+    "env": ("#",),
+    # "md" intentionally excluded — "#" starts a heading in Markdown, not a comment.
+}
+
+
+def _strip_boilerplate(text: str, language: str) -> str:
+    """Strip blank lines and full-line comments from *text* for *language*.
+
+    Conservative: only drops lines that are ENTIRELY blank or ENTIRELY a
+    comment after leading whitespace. Never touches inline (trailing)
+    comments, since those can be semantically meaningful in config values.
+    """
+    prefixes = _FULL_LINE_COMMENT_PREFIXES.get(language, ())
+    out: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if prefixes and stripped.startswith(prefixes):
+            continue
+        out.append(line)
+    return "\n".join(out)
+
+
 def build_snapshot(root: Path) -> str:
     """Generate a markdown snapshot of *root*.
 
@@ -128,6 +158,7 @@ def build_snapshot(root: Path) -> str:
             except Exception:
                 continue
             ext = rel.rsplit(".", 1)[-1]
+            content = _strip_boilerplate(content, ext)
             lines.append(f"### `{rel}`")
             lines.append(f"```{ext}")
             lines.append(content)

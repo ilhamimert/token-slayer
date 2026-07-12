@@ -66,6 +66,28 @@ class TestAnalyzeFile:
         assert "app.config" in info.imports
         assert "dataclasses" in info.imports
 
+    def test_has_syntax_error_false_for_valid_file(self, sample_project: Path):
+        info = analyze_file(sample_project / "main.py")
+        assert info.has_syntax_error is False
+
+    def test_has_syntax_error_true_for_broken_file(self, tmp_path: Path):
+        broken = tmp_path / "broken.py"
+        broken.write_text("def broken(:\n    pass\n", encoding="utf-8")
+        info = analyze_file(broken)
+        assert info.has_syntax_error is True
+
+    def test_has_syntax_error_roundtrips_through_to_from_dict(self, tmp_path: Path):
+        broken = tmp_path / "broken.py"
+        broken.write_text("def broken(:\n    pass\n", encoding="utf-8")
+        info = analyze_file(broken)
+        restored = FileInfo.from_dict(info.to_dict())
+        assert restored.has_syntax_error is True
+
+    def test_from_dict_defaults_has_syntax_error_when_key_missing(self):
+        data = {"path": "x.py", "lines": 1}
+        info = FileInfo.from_dict(data)
+        assert info.has_syntax_error is False
+
 
 class TestAnalyzeProject:
     def test_finds_all_py_files(self, sample_project: Path):

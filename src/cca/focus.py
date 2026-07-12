@@ -122,3 +122,36 @@ def rank_files(
 def focus_context_tokens(ranked: list[dict]) -> int:
     """Total tokens if Claude reads only the ranked files."""
     return sum(r["tokens"] for r in ranked)
+
+
+def rank_files_with_context(root: Path, query: str, top_n: int = 10) -> list[dict]:
+    """rank_files() plus each result's direct import neighbors.
+
+    Adds a "related" key to each ranked dict: a list of
+    {"file": str, "relation": "imports"|"imported_by"}. Neighbor files are
+    NOT added as new top-level entries — they annotate existing ranked
+    results so token budgets stay predictable.
+    """
+    from cca.parser import analyze_project
+    from cca.graph import build_graph
+
+    ranked = rank_files(root, query, top_n=top_n)
+    if not ranked:
+        return ranked
+
+    file_infos = analyze_project(root)
+    graph = build_graph(file_infos, root)
+    # graph nodes use OS-native separators; ranked "file" keys are forward-slash.
+    node_by_norm = {n.replace("\\", "/"): n for n in graph.nodes}
+
+    for r in ranked:
+        node = node_by_norm.get(r["file"])
+        related: list[dict] = []
+        if node and node in graph:
+            for succ in graph.successors(node):
+                related.append({"file": succ.replace("\\", "/"), "relation": "imports"})
+            for pred in graph.predecessors(node):
+                related.append({"file": pred.replace("\\", "/"), "relation": "imported_by"})
+        r["related"] = related
+
+    return ranked

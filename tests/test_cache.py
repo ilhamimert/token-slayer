@@ -99,3 +99,13 @@ class TestAnalyzeProjectCache:
         infos = analyze_project(tmp_path, use_cache=False)
         assert len(infos) == 1
         assert "g" in infos[0].functions
+
+    def test_stale_cache_entry_missing_has_syntax_error_key_defaults_false(self, tmp_path: Path):
+        py = tmp_path / "mod.py"
+        py.write_text("def f(): pass\n", encoding="utf-8")
+        cache: dict = {}
+        data = _sample_info(py)
+        del data["has_syntax_error"]  # simulate a cache entry written before this field existed
+        set_cached(cache, py, tmp_path, data)
+        result = get_cached(cache, py, tmp_path)
+        assert FileInfo.from_dict(result).has_syntax_error is False

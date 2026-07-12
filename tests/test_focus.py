@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 
-from cca.focus import _score_file, _tokenize, focus_context_tokens, rank_files
+from cca.focus import (
+    _score_file,
+    _tokenize,
+    focus_context_tokens,
+    rank_files,
+    rank_files_with_context,
+)
 
 
 # ── _tokenize ─────────────────────────────────────────────────────────────────
@@ -141,6 +147,40 @@ class TestRankFiles:
         results = rank_files(tmp_path, "payment charge")
         if results:
             assert results[0]["reason"] != ""
+
+
+# ── rank_files_with_context ─────────────────────────────────────────────────────
+
+class TestRankFilesWithContext:
+    def test_adds_related_key(self, sample_project: Path):
+        results = rank_files_with_context(sample_project, "config")
+        assert results
+        assert all("related" in r for r in results)
+        assert all(isinstance(r["related"], list) for r in results)
+
+    def test_related_contains_correct_relation_labels(self, sample_project: Path):
+        results = rank_files_with_context(sample_project, "config")
+        config_result = next(r for r in results if r["file"] == "app/config.py")
+        importers = {x["file"] for x in config_result["related"] if x["relation"] == "imported_by"}
+        assert "main.py" in importers
+        assert "app/models.py" in importers
+
+    def test_no_graph_relation_for_isolated_file(self, tmp_path: Path):
+        (tmp_path / "standalone.py").write_text(
+            "def widget(): return 1\n", encoding="utf-8"
+        )
+        results = rank_files_with_context(tmp_path, "widget")
+        assert results
+        assert results[0]["related"] == []
+
+    def test_without_deps_flag_unaffected(self, sample_project: Path):
+        plain = rank_files(sample_project, "config")
+        assert plain
+        assert set(plain[0].keys()) == {"file", "score", "tokens", "reason"}
+
+    def test_empty_ranked_returns_empty(self, sample_project: Path):
+        results = rank_files_with_context(sample_project, "nonexistent_keyword_xyzzy")
+        assert results == []
 
 
 # ── focus_context_tokens ──────────────────────────────────────────────────────
