@@ -9,7 +9,7 @@ description = "Slash your Claude token usage. Analyze Python projects, generate 
 readme = "README.md"
 license = "Apache-2.0"
 authors = [
-    { name = "Mexses50" },
+    { name = "ilhamimert" },
 ]
 requires-python = ">=3.11"
 dependencies = [
@@ -23,8 +23,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Mexses50/token-slayer"
-Repository = "https://github.com/Mexses50/token-slayer"
+Homepage = "https://github.com/ilhamimert/token-slayer"
+Repository = "https://github.com/ilhamimert/token-slayer"
 
 [project.scripts]
 tslayer = "cca.cli:app"

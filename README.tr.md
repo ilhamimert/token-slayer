@@ -46,13 +46,13 @@ Bir kere kurulduktan sonra, herhangi bir projeden, herhangi bir makineden çalı
 
 ```bash
 pip install pipx
-pipx install "token-slayer[mcp] @ git+https://github.com/Mexses50/token-slayer.git"
+pipx install "token-slayer[mcp] @ git+https://github.com/ilhamimert/token-slayer.git"
 ```
 
 ### Seçenek B — Yerel geliştirme kurulumu
 
 ```bash
-git clone https://github.com/Mexses50/token-slayer.git
+git clone https://github.com/ilhamimert/token-slayer.git
 cd token-slayer
 
 # Windows
@@ -143,7 +143,7 @@ tslayer focus . "Redis cache ekle" --with-deps
 Hayır. Token Slayer hiçbir LLM'i çağırmaz — yerel bir statik-analiz aracıdır. Zaten sahip olduğun Claude Code, *onu* çağırır, tersi değil.
 
 **Yeni bir makinede / başka biri için çalışır mı?**
-Evet — makine başına bir kere `pipx install "token-slayer[mcp] @ git+https://github.com/Mexses50/token-slayer.git"`, proje başına bir kere `tslayer init`. [Kurulum](#kurulum) bölümüne bak.
+Evet — makine başına bir kere `pipx install "token-slayer[mcp] @ git+https://github.com/ilhamimert/token-slayer.git"`, proje başına bir kere `tslayer init`. [Kurulum](#kurulum) bölümüne bak.
 
 **Hangi dilleri analiz ediyor?**
 Python için tam destek. TypeScript ve Go için `analyze --multilang` ile temel (regex tabanlı) destek.
@@ -154,7 +154,7 @@ Python için tam destek. TypeScript ve Go için `analyze --multilang` ile temel 
 ## Geliştirme
 
 ```bash
-git clone https://github.com/Mexses50/token-slayer.git
+git clone https://github.com/ilhamimert/token-slayer.git
 cd token-slayer
 python -m venv .venv
 .venv/Scripts/pip install -e ".[dev,mcp]"   # Windows
@@ -165,4 +165,4 @@ pytest -q
 
 ## Lisans
 
-Apache License 2.0 — bkz. [LICENSE](LICENSE). Telif hakkı © 2026 [Mexses50](https://github.com/Mexses50).
+Apache License 2.0 — bkz. [LICENSE](LICENSE). Telif hakkı © 2026 [ilhamimert](https://github.com/ilhamimert).

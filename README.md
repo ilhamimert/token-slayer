@@ -46,13 +46,13 @@ Works from any project, on any machine, once installed:
 
 ```bash
 pip install pipx
-pipx install "token-slayer[mcp] @ git+https://github.com/Mexses50/token-slayer.git"
+pipx install "token-slayer[mcp] @ git+https://github.com/ilhamimert/token-slayer.git"
 ```
 
 ### Option B — Local development install
 
 ```bash
-git clone https://github.com/Mexses50/token-slayer.git
+git clone https://github.com/ilhamimert/token-slayer.git
 cd token-slayer
 
 # Windows
@@ -143,7 +143,7 @@ Once `.mcp.json` is registered (via `tslayer init`), Claude Code can call these 
 No. Token Slayer never calls any LLM — it's a local static-analysis tool. Claude Code (which you already have) calls *it*, not the other way around.
 
 **Will this work on a fresh machine / for someone else?**
-Yes — `pipx install "token-slayer[mcp] @ git+https://github.com/Mexses50/token-slayer.git"` once per machine, then `tslayer init` once per project. See [Installation](#installation).
+Yes — `pipx install "token-slayer[mcp] @ git+https://github.com/ilhamimert/token-slayer.git"` once per machine, then `tslayer init` once per project. See [Installation](#installation).
 
 **What languages does it analyze?**
 Full support for Python. Basic (regex-based) support for TypeScript and Go via `analyze --multilang`.
@@ -154,7 +154,7 @@ Full support for Python. Basic (regex-based) support for TypeScript and Go via `
 ## Development
 
 ```bash
-git clone https://github.com/Mexses50/token-slayer.git
+git clone https://github.com/ilhamimert/token-slayer.git
 cd token-slayer
 python -m venv .venv
 .venv/Scripts/pip install -e ".[dev,mcp]"   # Windows
@@ -165,4 +165,4 @@ pytest -q
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE). Copyright © 2026 [Mexses50](https://github.com/Mexses50).
+Apache License 2.0 — see [LICENSE](LICENSE). Copyright © 2026 [ilhamimert](https://github.com/ilhamimert).
